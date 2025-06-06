@@ -2751,13 +2751,13 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             }
         }
 
-        List<Long> streamPrefixes = handleStream(items);
-        streamPrefixes.forEach(x -> prefixes.add(x.intValue()));
-        if (!prefixes.isEmpty()) {
-            visitDotWithPrefix(items, needDot, prefixes, streamPrefixes.isEmpty() ? INDEPENDENT : UNIFIED);
-        } else {
-            visitRegularDot(items, needDot);
-        }
+        //        List<Long> streamPrefixes = handleStream(items);
+        //        streamPrefixes.forEach(x -> prefixes.add(x.intValue()));
+        //        if (!prefixes.isEmpty()) {
+        //            visitDotWithPrefix(items, needDot, prefixes, streamPrefixes.isEmpty() ? INDEPENDENT : UNIFIED);
+        //        } else {
+        visitRegularDot(items, needDot);
+        //        }
 
         if (node != null) {
             builder.close();
