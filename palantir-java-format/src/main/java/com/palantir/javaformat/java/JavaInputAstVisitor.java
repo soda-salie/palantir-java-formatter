@@ -997,6 +997,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 null, leadingDims > 0 ? dims.dims.subList(0, dims.dims.size() - leadingDims) : dims.dims);
     }
 
+    @SuppressWarnings("for-rollout:NullAway")
     @Override
     public Void visitForLoop(ForLoopTree node, Void unused) {
         sync(node);
@@ -1622,6 +1623,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 .collect(toList());
     }
 
+    @SuppressWarnings("for-rollout:NullAway")
     private static <T> Stream<Long> indexes(Stream<T> stream, Predicate<T> predicate) {
         return Streams.mapWithIndex(stream, (x, i) -> predicate.apply(x) ? i : -1)
                 .filter(x -> x != -1);
@@ -1802,6 +1804,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     // TODO(cushon): is this worth special-casing?
+    @SuppressWarnings("for-rollout:NullAway")
     boolean visitSingleMemberAnnotation(AnnotationTree node) {
         if (node.getArguments().size() != 1) {
             return false;
@@ -2172,6 +2175,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         }
     }
 
+    @SuppressWarnings("for-rollout:NullAway")
     protected void visitStatements(List<? extends StatementTree> statements, boolean inlineFirst) {
         boolean first = true;
         PeekingIterator<StatementTree> it = Iterators.peekingIterator(statements.iterator());
@@ -2186,6 +2190,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             }
             markForPartialFormat();
             first = false;
+            @SuppressWarnings("for-rollout:NullAway")
             List<VariableTree> fragments = variableFragments(it, tree);
             if (!fragments.isEmpty()) {
                 visitVariables(
@@ -2760,54 +2765,84 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     /**
-     * Output a "regular" chain of dereferences, possibly in builder-style. Break before every dot.
+     * Выводит цепочку через точку, разбивая строку только в двух случаях:
+     *   1) Текущий элемент — доступ к полю (MemberSelectTree), а предыдущий — вызов метода (MethodInvocationTree или NewClassTree).
+     *   2) Текущий элемент — вызов метода (MethodInvocationTree), а предыдущий — тоже вызов метода.
      *
-     * @param items in the chain
-     * @param needDot whether a leading dot is needed
+     * При этом сохраняем проверку на минимальную длину до первого разрыва: разрыв не делается,
+     * пока длина напечатанного фрагмента ≤ minLength.
+     *
+     * @param items   список элементов цепочки (ExpressionTree): это могут быть MemberSelectTree, MethodInvocationTree, NewClassTree и т.д.
+     * @param needDot =true, если перед первым элементом нужно вывести точку («.»).
      */
     private void visitRegularDot(List<ExpressionTree> items, boolean needDot) {
-        boolean trailingDereferences = items.size() > 1;
+        // Если needDot == false, значит мы ещё не печатали первую точку → сразу открываем рамку с отступом plusFour
         boolean needDot0 = needDot;
         if (!needDot0) {
-            // Verified `preferBreakIfLastLevel = true` is good here, see B20128760.
-            // This level can come after either:
-            //      * checkArgument(        -- B19950815                (!trailingDereferences)
-            //      * foo.bar()             -- palantir-chains-lambdas  ( trailingDereferences)
             builder.open(OpenOp.builder()
                     .debugName("visitRegularDot")
                     .plusIndent(plusFour)
                     .breakBehaviour(BreakBehaviours.preferBreakingLastInnerLevel(false))
                     .breakabilityIfLastLevel(LastLevelBreakability.ACCEPT_INLINE_CHAIN_IF_SIMPLE_OTHERWISE_CHECK_INNER)
                     .columnLimitBeforeLastBreak(METHOD_CHAIN_COLUMN_LIMIT)
-                    .isSimple(!trailingDereferences)
+                    .isSimple(false)
                     .build());
         }
-        // don't break after the first element if it is every small, unless the
-        // chain starts with another expression
+
+        // minLength = indentMultiplier*4: минимальная длина до первого разрыва
         int minLength = indentMultiplier * 4;
+        // length = уже напечатанная длина: если первая точка печаталась до вызова visitRegularDot,
+        // то length = minLength, иначе 0.
         int length = needDot0 ? minLength : 0;
+
+        ExpressionTree prev = null; // будем хранить предыдущий элемент цепочки, чтобы проверять тип
+
         for (ExpressionTree e : items) {
             if (needDot) {
-                if (length > minLength) {
+                // Проверяем условие на разрыв:
+                // 1) length > minLength  (до этого не разрывались из-за короткой строки)
+                // 2) И ( (e – MemberSelectTree  && prev – MethodInvocationTree|NewClassTree)
+                //      || (e – MethodInvocationTree && prev – MethodInvocationTree) )
+                boolean prevIsMethodLike = prev != null
+                        && (prev.getKind() == Tree.Kind.METHOD_INVOCATION || prev.getKind() == Tree.Kind.NEW_CLASS);
+                boolean curIsField = e.getKind() == Tree.Kind.MEMBER_SELECT;
+                boolean curIsMethod = e.getKind() == Tree.Kind.METHOD_INVOCATION;
+                boolean shouldBreak = length > minLength
+                        && ((curIsField && prevIsMethodLike)
+                                || (curIsMethod && prev != null && prev.getKind() == Tree.Kind.METHOD_INVOCATION));
+
+                if (shouldBreak) {
                     builder.breakOp(Break.builder()
                             .fillMode(FillMode.UNIFIED)
-                            .flat("")
-                            .plusIndent(ZERO)
+                            .flat("") // сразу новая строка без пробелов перед «.»
+                            .plusIndent(ZERO) // отступ уже задан в open()
                             .hasColumnLimit(shouldHaveColumnLimit(e))
                             .build());
+                    // после breakOp мы на новой строке с отступом plusFour
+                    length = 0; // сбрасываем длину для подсчёта новой линии
                 }
-                token(".");
-                length++;
+
+                token("."); // печатаем точку
+                length++; // т.к. точка увеличивает длину на 1
             }
-            if (!fillFirstArgument(e, items, trailingDereferences ? ZERO : minusFour)) {
+
+            // Печатаем сам элемент e: либо «заполняем arg» (fillFirstArgument), либо
+            // dotExpressionUpToArgs + dotExpressionArgsAndParen
+            if (!fillFirstArgument(e, items, ZERO)) {
                 BreakTag tyargTag = new BreakTag();
                 dotExpressionUpToArgs(e, Optional.of(tyargTag));
                 Indent tyargIndent = Indent.If.make(tyargTag, plusFour, ZERO);
-                dotExpressionArgsAndParen(e, tyargIndent, (trailingDereferences || needDot) ? plusFour : ZERO);
+                dotExpressionArgsAndParen(e, tyargIndent, plusFour);
             }
+
+            // Увеличиваем length на «ширину» элемента e
             length += getLength(e, getCurrentPath());
+
+            // Устанавливаем для следующей итерации
             needDot = true;
+            prev = e;
         }
+
         if (!needDot0) {
             builder.close();
         }
@@ -2820,6 +2855,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     //             .happens())
     //     .thenReturn(result);
     //
+    @SuppressWarnings("for-rollout:NullAway")
     private boolean fillFirstArgument(ExpressionTree e, List<ExpressionTree> items, Indent indent) {
         // is there a trailing dereference?
         if (items.size() < 2) {
@@ -2860,6 +2896,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     private void visitDotWithPrefix(
             List<ExpressionTree> items, boolean needDot, Collection<Integer> prefixes, FillMode prefixFillMode) {
         // Are there method invocations or field accesses after the prefix?
+        @SuppressWarnings("for-rollout:NullAway")
         boolean trailingDereferences = !prefixes.isEmpty() && getLast(prefixes) < items.size() - 1;
 
         boolean hasMethodInvocations = items.stream().anyMatch(expr -> expr.getKind() == METHOD_INVOCATION);
@@ -3253,12 +3290,14 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     /** Returns the number of columns if the arguments arg laid out in a grid, or else {@code -1}. */
+    @SuppressWarnings("for-rollout:NullAway")
     private int argumentsAreTabular(List<? extends ExpressionTree> arguments) {
         if (arguments.isEmpty()) {
             return -1;
         }
         List<List<ExpressionTree>> rows = new ArrayList<>();
         PeekingIterator<ExpressionTree> it = Iterators.peekingIterator(arguments.iterator());
+        @SuppressWarnings("for-rollout:NullAway")
         int start0 = actualColumn(it.peek());
         {
             List<ExpressionTree> row = new ArrayList<>();
@@ -3276,6 +3315,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         }
         while (it.hasNext()) {
             List<ExpressionTree> row = new ArrayList<>();
+            @SuppressWarnings("for-rollout:NullAway")
             int start = actualColumn(it.peek());
             if (start != start0) {
                 return -1;
@@ -3338,6 +3378,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     /** How many lines does this node take up in the input. Returns at least 1. */
+    @SuppressWarnings("for-rollout:NullAway")
     int lineSpan(Tree node) {
         ImmutableRangeMap<Integer, ? extends Input.Token> positionTokenMap =
                 builder.getInput().getPositionTokenMap();
@@ -3646,6 +3687,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 Tree bodyDeclaration = it.next();
                 dropEmptyDeclarations();
                 builder.forcedBreak();
+                @SuppressWarnings("for-rollout:NullAway")
                 boolean thisOneGetsBlankLineBefore =
                         bodyDeclaration.getKind() != VARIABLE || hasJavaDoc(bodyDeclaration);
                 if (first) {
@@ -3712,6 +3754,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
      *
      * <p>e.g. {@code int x, y;} is parsed as {@code int x; int y;}.
      */
+    @SuppressWarnings("for-rollout:NullAway")
     private List<VariableTree> variableFragments(PeekingIterator<? extends Tree> it, Tree first) {
         List<VariableTree> fragments = new ArrayList<>();
         if (first.getKind() == VARIABLE) {
@@ -3748,6 +3791,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             return false;
         }
         Tree lastNode = getLast(nodes);
+        @SuppressWarnings("for-rollout:NullAway")
         Optional<? extends Input.Token> nextToken = getNextToken(input, getEndPosition(lastNode, getCurrentPath()));
         return nextToken.isPresent() && nextToken.get().getTok().getText().equals(token);
     }

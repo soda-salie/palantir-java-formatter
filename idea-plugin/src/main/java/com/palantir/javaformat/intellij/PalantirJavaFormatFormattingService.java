@@ -82,6 +82,40 @@ class PalantirJavaFormatFormattingService extends AsyncDocumentFormattingService
             this.formatterService = formatterService;
         }
 
+        public static String applyReplacements(String input, Collection<Replacement> replacementsCollection) {
+            List<Replacement> replacements = new ArrayList<>(replacementsCollection);
+            replacements.sort(comparing((Replacement r) -> r.getReplaceRange().lowerEndpoint())
+                    .reversed());
+            StringBuilder writer = new StringBuilder(input);
+            for (Replacement replacement : replacements) {
+                writer.replace(
+                        replacement.getReplaceRange().lowerEndpoint(),
+                        replacement.getReplaceRange().upperEndpoint(),
+                        replacement.getReplacementString());
+            }
+            return writer.toString();
+        }
+
+        private static Collection<Range<Integer>> toRanges(AsyncFormattingRequest request) {
+            if (isWholeFile(request)) {
+                // The IDE sometimes passes invalid ranges when the file is unsaved before invoking the
+                // formatter. So this is a workaround for that issue.
+                return ImmutableList.of(
+                        Range.closedOpen(0, request.getDocumentText().length()));
+            }
+            return request.getFormattingRanges().stream()
+                    .map(textRange -> Range.closedOpen(textRange.getStartOffset(), textRange.getEndOffset()))
+                    .collect(ImmutableList.toImmutableList());
+        }
+
+        private static boolean isWholeFile(AsyncFormattingRequest request) {
+            List<TextRange> ranges = request.getFormattingRanges();
+            return ranges.size() == 1
+                    && ranges.get(0).getStartOffset() == 0
+                    // using greater than or equal because ranges are sometimes passed inaccurately
+                    && ranges.get(0).getEndOffset() >= request.getDocumentText().length();
+        }
+
         @Override
         public void run() {
             if (formatterService.isEmpty()) {
@@ -124,40 +158,6 @@ class PalantirJavaFormatFormattingService extends AsyncDocumentFormattingService
                         Notifications.parsingErrorMessage(
                                 request.getContext().getContainingFile().getName()));
             }
-        }
-
-        public static String applyReplacements(String input, Collection<Replacement> replacementsCollection) {
-            List<Replacement> replacements = new ArrayList<>(replacementsCollection);
-            replacements.sort(comparing((Replacement r) -> r.getReplaceRange().lowerEndpoint())
-                    .reversed());
-            StringBuilder writer = new StringBuilder(input);
-            for (Replacement replacement : replacements) {
-                writer.replace(
-                        replacement.getReplaceRange().lowerEndpoint(),
-                        replacement.getReplaceRange().upperEndpoint(),
-                        replacement.getReplacementString());
-            }
-            return writer.toString();
-        }
-
-        private static Collection<Range<Integer>> toRanges(AsyncFormattingRequest request) {
-            if (isWholeFile(request)) {
-                // The IDE sometimes passes invalid ranges when the file is unsaved before invoking the
-                // formatter. So this is a workaround for that issue.
-                return ImmutableList.of(
-                        Range.closedOpen(0, request.getDocumentText().length()));
-            }
-            return request.getFormattingRanges().stream()
-                    .map(textRange -> Range.closedOpen(textRange.getStartOffset(), textRange.getEndOffset()))
-                    .collect(ImmutableList.toImmutableList());
-        }
-
-        private static boolean isWholeFile(AsyncFormattingRequest request) {
-            List<TextRange> ranges = request.getFormattingRanges();
-            return ranges.size() == 1
-                    && ranges.get(0).getStartOffset() == 0
-                    // using greater than or equal because ranges are sometimes passed inaccurately
-                    && ranges.get(0).getEndOffset() >= request.getDocumentText().length();
         }
 
         @Override
