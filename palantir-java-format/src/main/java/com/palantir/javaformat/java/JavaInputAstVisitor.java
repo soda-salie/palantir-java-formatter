@@ -2920,27 +2920,45 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
 
         Deque<Integer> unconsumedPrefixes = new ArrayDeque<>(ImmutableSortedSet.copyOf(prefixes));
         BreakTag nameTag = new BreakTag();
+
+        int minLength = indentMultiplier * 4;
+        int length = needDot ? minLength : 0;
+        ExpressionTree prev = null;
+
         for (int i = 0; i < items.size(); i++) {
             ExpressionTree e = items.get(i);
+
             if (needDot) {
-                FillMode fillMode;
-                if (!unconsumedPrefixes.isEmpty() && i <= unconsumedPrefixes.peekFirst()) {
-                    fillMode = prefixFillMode;
-                } else {
-                    fillMode = FillMode.UNIFIED;
+                boolean prevIsMethodLike = prev != null
+                        && (prev.getKind() == Tree.Kind.METHOD_INVOCATION || prev.getKind() == Tree.Kind.NEW_CLASS);
+                boolean curIsField = e.getKind() == Tree.Kind.MEMBER_SELECT;
+                boolean curIsMethod = e.getKind() == Tree.Kind.METHOD_INVOCATION;
+                boolean shouldBreak = length > minLength
+                        && ((curIsField && prevIsMethodLike)
+                                || (curIsMethod && prev != null && prev.getKind() == Tree.Kind.METHOD_INVOCATION));
+
+                FillMode fillMode = (!unconsumedPrefixes.isEmpty() && i <= unconsumedPrefixes.peekFirst())
+                        ? prefixFillMode
+                        : FillMode.UNIFIED;
+
+                if (shouldBreak) {
+                    builder.breakOp(Break.builder()
+                            .fillMode(fillMode)
+                            .flat("")
+                            .plusIndent(ZERO)
+                            .optTag(Optional.of(nameTag))
+                            .hasColumnLimit(shouldHaveColumnLimit(e))
+                            .build());
+                    length = 0;
                 }
 
-                builder.breakOp(Break.builder()
-                        .fillMode(fillMode)
-                        .flat("")
-                        .plusIndent(ZERO)
-                        .optTag(Optional.of(nameTag))
-                        .hasColumnLimit(shouldHaveColumnLimit(e))
-                        .build());
                 token(".");
+                length++;
             }
+
             BreakTag tyargTag = new BreakTag();
             dotExpressionUpToArgs(e, Optional.of(tyargTag));
+
             if (!unconsumedPrefixes.isEmpty() && i == unconsumedPrefixes.peekFirst()) {
                 builder.close();
                 unconsumedPrefixes.removeFirst();
@@ -2950,6 +2968,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             Indent argsIndent = Indent.If.make(nameTag, plusFour, trailingDereferences ? plusFour : ZERO);
             dotExpressionArgsAndParen(e, tyargIndent, argsIndent);
 
+            length += getLength(e, getCurrentPath());
+            prev = e;
             needDot = true;
         }
 
