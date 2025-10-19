@@ -41,10 +41,8 @@ import static com.sun.source.tree.Tree.Kind.NEW_CLASS;
 import static com.sun.source.tree.Tree.Kind.STRING_LITERAL;
 import static com.sun.source.tree.Tree.Kind.UNION_TYPE;
 import static com.sun.source.tree.Tree.Kind.VARIABLE;
-import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import com.google.common.base.Verify;
 import com.google.common.collect.HashMultiset;
@@ -57,7 +55,6 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multiset;
 import com.google.common.collect.PeekingIterator;
-import com.google.common.collect.Streams;
 import com.palantir.javaformat.BreakBehaviours;
 import com.palantir.javaformat.CloseOp;
 import com.palantir.javaformat.FormattingError;
@@ -152,7 +149,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.lang.model.element.Name;
 
@@ -1612,22 +1608,22 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             "withCause",
             "withStackTrace");
 
-    private static List<Long> handleStream(List<ExpressionTree> parts) {
-        return indexes(parts.stream(), p -> {
-                    if (!(p instanceof MethodInvocationTree)) {
-                        return false;
-                    }
-                    Name name = getMethodName((MethodInvocationTree) p);
-                    return Stream.of("stream", "parallelStream", "toBuilder").anyMatch(name::contentEquals);
-                })
-                .collect(toList());
-    }
+    //    private static List<Long> handleStream(List<ExpressionTree> parts) {
+    //        return indexes(parts.stream(), p -> {
+    //                    if (!(p instanceof MethodInvocationTree)) {
+    //                        return false;
+    //                    }
+    //                    Name name = getMethodName((MethodInvocationTree) p);
+    //                    return Stream.of("stream", "parallelStream", "toBuilder").anyMatch(name::contentEquals);
+    //                })
+    //                .collect(toList());
+    //    }
 
-    @SuppressWarnings("for-rollout:NullAway")
-    private static <T> Stream<Long> indexes(Stream<T> stream, Predicate<T> predicate) {
-        return Streams.mapWithIndex(stream, (x, i) -> predicate.apply(x) ? i : -1)
-                .filter(x -> x != -1);
-    }
+    // u   @SuppressWarnings("for-rollout:NullAway")
+    //    private static <T> Stream<Long> indexes(Stream<T> stream, Predicate<T> predicate) {
+    //        return Streams.mapWithIndex(stream, (x, i) -> predicate.apply(x) ? i : -1)
+    //                .filter(x -> x != -1);
+    //    }
 
     @Override
     public Void visitMemberSelect(MemberSelectTree node, Void unused) {
@@ -2764,6 +2760,41 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         }
     }
 
+    private static boolean isZeroArg(MethodInvocationTree mi) {
+        return mi.getArguments() == null || mi.getArguments().isEmpty();
+    }
+
+    private static @Nullable String methodName(ExpressionTree e) {
+        // supports both a.b() and b()
+        if (e.getKind() != Tree.Kind.METHOD_INVOCATION) return null;
+        ExpressionTree select = ((MethodInvocationTree) e).getMethodSelect();
+        if (select.getKind() == Tree.Kind.MEMBER_SELECT) {
+            return ((MemberSelectTree) select).getIdentifier().toString();
+        } else if (select.getKind() == Tree.Kind.IDENTIFIER) {
+            return ((IdentifierTree) select).getName().toString();
+        }
+        return null;
+    }
+
+    private static boolean isCall(ExpressionTree e, String name) {
+        if (e.getKind() != Tree.Kind.METHOD_INVOCATION) return false;
+        if (!isZeroArg((MethodInvocationTree) e)) return false;
+        String n = methodName(e);
+        return name.equals(n);
+    }
+
+    private static boolean isBlockOpen(ExpressionTree e) {
+        return isCall(e, "or") || isCall(e, "and");
+    }
+
+    private static boolean isBlockClose(ExpressionTree e) {
+        return isCall(e, "endOr") || isCall(e, "endAnd");
+    }
+
+    private static boolean matchesClose(String open, @Nullable String close) {
+        return ("or".equals(open) && "endOr".equals(close)) || ("and".equals(open) && "endAnd".equals(close));
+    }
+
     /**
      * Выводит цепочку через точку, разбивая строку только в двух случаях:
      *   1) Текущий элемент — доступ к полю (MemberSelectTree), а предыдущий — вызов метода (MethodInvocationTree или NewClassTree).
@@ -2776,7 +2807,6 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
      * @param needDot =true, если перед первым элементом нужно вывести точку («.»).
      */
     private void visitRegularDot(List<ExpressionTree> items, boolean needDot) {
-        // Если needDot == false, значит мы ещё не печатали первую точку → сразу открываем рамку с отступом plusFour
         boolean needDot0 = needDot;
         if (!needDot0) {
             builder.open(OpenOp.builder()
@@ -2789,58 +2819,97 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                     .build());
         }
 
-        // minLength = indentMultiplier*4: минимальная длина до первого разрыва
         int minLength = indentMultiplier * 4;
-        // length = уже напечатанная длина: если первая точка печаталась до вызова visitRegularDot,
-        // то length = minLength, иначе 0.
         int length = needDot0 ? minLength : 0;
 
-        ExpressionTree prev = null; // будем хранить предыдущий элемент цепочки, чтобы проверять тип
+        ExpressionTree prev = null;
 
-        for (ExpressionTree e : items) {
+        // NEW: logical blocks
+        Deque<String> logicStack = new ArrayDeque<>();
+
+        for (int idx = 0; idx < items.size(); idx++) {
+            ExpressionTree e = items.get(idx);
+
+            // Перед печатью текущего звена: обработка закрывашек
+            // Если встречаем endOr()/endAnd(), сначала перенос строки и закрываем предыдущий блок.
+            if (isBlockClose(e) && !logicStack.isEmpty()) {
+                String closeName = methodName(e);
+                while (!logicStack.isEmpty() && matchesClose(logicStack.peek(), closeName)) {
+                    builder.close(); // 1) сначала уменьшаем отступ
+                    logicStack.pop();
+                }
+                builder.breakOp(Break.makeForced()); // 2) затем жёсткий перенос
+                length = 0;
+            }
+
+            boolean forceBreakForOpen = isBlockOpen(e);
+
             if (needDot) {
-                // Проверяем условие на разрыв:
-                // 1) length > minLength  (до этого не разрывались из-за короткой строки)
-                // 2) И ( (e – MemberSelectTree  && prev – MethodInvocationTree|NewClassTree)
-                //      || (e – MethodInvocationTree && prev – MethodInvocationTree) )
                 boolean prevIsMethodLike = prev != null
                         && (prev.getKind() == Tree.Kind.METHOD_INVOCATION || prev.getKind() == Tree.Kind.NEW_CLASS);
                 boolean curIsField = e.getKind() == Tree.Kind.MEMBER_SELECT;
                 boolean curIsMethod = e.getKind() == Tree.Kind.METHOD_INVOCATION;
+
                 boolean shouldBreak = length > minLength
                         && ((curIsField && prevIsMethodLike)
                                 || (curIsMethod && prev != null && prev.getKind() == Tree.Kind.METHOD_INVOCATION));
 
-                if (shouldBreak) {
-                    builder.breakOp(Break.builder()
-                            .fillMode(FillMode.UNIFIED)
-                            .flat("") // сразу новая строка без пробелов перед «.»
-                            .plusIndent(ZERO) // отступ уже задан в open()
-                            .hasColumnLimit(shouldHaveColumnLimit(e))
-                            .build());
-                    // после breakOp мы на новой строке с отступом plusFour
-                    length = 0; // сбрасываем длину для подсчёта новой линии
+                // Дополнительно: если это начало логического блока (or/and),
+                // почти всегда хотим перенос перед ним, чтобы ".or()" оказался на новой строке,
+                // даже если minLength ещё не набран.
+                if (forceBreakForOpen || shouldBreak) {
+                    if (forceBreakForOpen) {
+                        builder.breakOp(Break.makeForced());
+                    } else {
+                        builder.breakOp(Break.builder()
+                                .fillMode(FillMode.UNIFIED)
+                                .flat("")
+                                .plusIndent(ZERO)
+                                .hasColumnLimit(shouldHaveColumnLimit(e))
+                                .build());
+                    }
+                    length = 0;
                 }
 
-                token("."); // печатаем точку
-                length++; // т.к. точка увеличивает длину на 1
+                token(".");
+                length++;
             }
 
-            // Печатаем сам элемент e: либо «заполняем arg» (fillFirstArgument), либо
-            // dotExpressionUpToArgs + dotExpressionArgsAndParen
+            // Печать самого элемента
             if (!fillFirstArgument(e, items, ZERO)) {
                 BreakTag tyargTag = new BreakTag();
                 dotExpressionUpToArgs(e, Optional.of(tyargTag));
                 Indent tyargIndent = Indent.If.make(tyargTag, plusFour, ZERO);
-                dotExpressionArgsAndParen(e, tyargIndent, plusFour);
+
+                // Если мы внутри глубокой логики (после or/and), хотим аргументы/скобки с тем же +4,
+                // иначе — как у вас было (plusFour).
+                Indent argsIndent = plusFour;
+                dotExpressionArgsAndParen(e, tyargIndent, argsIndent);
             }
 
-            // Увеличиваем length на «ширину» элемента e
             length += getLength(e, getCurrentPath());
 
-            // Устанавливаем для следующей итерации
+            // После печати e: если это открытие блока — открываем с +4 для следующих строк
+            if (isBlockOpen(e)) {
+                builder.open(OpenOp.builder()
+                        .debugName("logicalBlock-" + methodName(e))
+                        .plusIndent(plusFour)
+                        .breakBehaviour(BreakBehaviours.preferBreakingLastInnerLevel(false))
+                        .breakabilityIfLastLevel(LastLevelBreakability.CHECK_INNER)
+                        .isSimple(false)
+                        .build());
+                logicStack.push(methodName(e)); // "or" или "and"
+                // length уже сброшен выше
+            }
+
             needDot = true;
             prev = e;
+        }
+
+        // Если что-то не закрыли (на всякий случай) — закроем
+        while (!logicStack.isEmpty()) {
+            builder.close();
+            logicStack.pop();
         }
 
         if (!needDot0) {
