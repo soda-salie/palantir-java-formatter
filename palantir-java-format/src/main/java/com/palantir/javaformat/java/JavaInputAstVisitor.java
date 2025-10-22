@@ -2900,6 +2900,11 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                         .build());
                 logicStack.push(methodName(e)); // "or" или "and"
                 // length уже сброшен выше
+
+                // Форсируем перенос СРАЗУ ПОСЛЕ ".or()" / ".and()",
+                // чтобы следующий звено цепочки началось с новой строки.
+                builder.breakOp(Break.makeForced());
+                length = 0;
             }
 
             needDot = true;
