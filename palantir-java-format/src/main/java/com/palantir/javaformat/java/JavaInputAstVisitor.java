@@ -2808,10 +2808,12 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
      */
     private void visitRegularDot(List<ExpressionTree> items, boolean needDot) {
         boolean needDot0 = needDot;
+        boolean chainContainsLogicalBlocks = items.stream().anyMatch(JavaInputAstVisitor::isBlockOpen);
         if (!needDot0) {
+            Indent chainIndent = chainContainsLogicalBlocks ? ZERO : plusFour;
             builder.open(OpenOp.builder()
                     .debugName("visitRegularDot")
-                    .plusIndent(plusFour)
+                    .plusIndent(chainIndent)
                     .breakBehaviour(BreakBehaviours.preferBreakingLastInnerLevel(false))
                     .breakabilityIfLastLevel(LastLevelBreakability.ACCEPT_INLINE_CHAIN_IF_SIMPLE_OTHERWISE_CHECK_INNER)
                     .columnLimitBeforeLastBreak(METHOD_CHAIN_COLUMN_LIMIT)
@@ -2842,11 +2844,14 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 length = 0;
             }
 
-            boolean forceBreakForOpen = isBlockOpen(e);
+            boolean logicalBlockOpen = isBlockOpen(e);
 
             if (needDot) {
                 boolean prevIsMethodLike = prev != null
                         && (prev.getKind() == Tree.Kind.METHOD_INVOCATION || prev.getKind() == Tree.Kind.NEW_CLASS);
+                boolean isFirstDereferenceOnNonIdentifier =
+                        idx == 1 && prev != null && prev.getKind() != Tree.Kind.IDENTIFIER;
+                boolean startsAfterPrimaryExpression = needDot0 && idx == 0;
                 boolean curIsField = e.getKind() == Tree.Kind.MEMBER_SELECT;
                 boolean curIsMethod = e.getKind() == Tree.Kind.METHOD_INVOCATION;
 
@@ -2854,11 +2859,20 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                         && ((curIsField && prevIsMethodLike)
                                 || (curIsMethod && prev != null && prev.getKind() == Tree.Kind.METHOD_INVOCATION));
 
-                // Дополнительно: если это начало логического блока (or/and),
-                // почти всегда хотим перенос перед ним, чтобы ".or()" оказался на новой строке,
-                // даже если minLength ещё не набран.
-                if (forceBreakForOpen || shouldBreak) {
-                    if (forceBreakForOpen) {
+                // For logical block openers (.or()/.and()) we force a break when:
+                //  1) the receiver is long enough, or
+                //  2) the first dereference starts from a non-identifier receiver (e.g. new Foo().or()), or
+                //  3) the chain starts from a primary expression (e.g. new Foo() as a receiver), or
+                //  4) the receiver is method-like and already printed on the same line.
+                // Short receivers like `q.and()` stay inline.
+                boolean shouldBreakBeforeLogicalOpen =
+                        logicalBlockOpen
+                                && (length > minLength
+                                        || isFirstDereferenceOnNonIdentifier
+                                        || startsAfterPrimaryExpression
+                                        || (prevIsMethodLike && length > 0));
+                if (shouldBreakBeforeLogicalOpen || shouldBreak) {
+                    if (shouldBreakBeforeLogicalOpen || logicalBlockOpen) {
                         builder.breakOp(Break.makeForced());
                     } else {
                         builder.breakOp(Break.builder()
@@ -2901,10 +2915,11 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 logicStack.push(methodName(e)); // "or" или "and"
                 // length уже сброшен выше
 
-                // Форсируем перенос СРАЗУ ПОСЛЕ ".or()" / ".and()",
-                // чтобы следующий звено цепочки началось с новой строки.
-                builder.breakOp(Break.makeForced());
-                length = 0;
+                // Force a break after .or()/.and() only when there is a following chain element.
+                if (idx + 1 < items.size()) {
+                    builder.breakOp(Break.makeForced());
+                    length = 0;
+                }
             }
 
             needDot = true;

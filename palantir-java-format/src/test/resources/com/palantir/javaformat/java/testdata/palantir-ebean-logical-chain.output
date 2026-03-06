@@ -1,0 +1,44 @@
+import java.time.LocalDate;
+
+class Test {
+  public QTariffPayment getTariffPaymentsFilter(
+      LocalDate lastMonthDayOfTo,
+      LocalDate firstMonthDayOfFrom,
+      LocalDate lastMonthDayOfTo1,
+      LocalDate firstMonthDayOfFrom1,
+      LocalDate now) {
+    QTariffPayment q = new QTariffPayment()
+        .or();
+
+    q.and()
+        .date.le(lastMonthDayOfTo)
+        .date.ge(firstMonthDayOfFrom)
+    .endAnd();
+
+    if (lastMonthDayOfTo1 != null && firstMonthDayOfFrom1 != null)
+      q.and()
+          .date.le(lastMonthDayOfTo1)
+          .date.ge(firstMonthDayOfFrom1)
+      .endAnd();
+
+    q.and()
+        .or()
+            .date.lt(q.contractTariff.contract.dateFrom)
+            .date.gt(now)
+            .and()
+                .contractTariff.contract.dateTo.isNotNull()
+                .date.gt(q.contractTariff.contract.dateTo)
+            .endAnd()
+        .endOr()
+    .endAnd();
+
+    return q.endOr();
+  }
+
+  public void longName() {
+    qqqqqqqqqqqq
+    .and()
+        .date.le(x)
+    .endAnd();
+  }
+}
