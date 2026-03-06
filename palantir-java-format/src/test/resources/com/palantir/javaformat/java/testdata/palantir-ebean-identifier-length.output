@@ -1,0 +1,42 @@
+import java.time.LocalDate;
+import java.util.function.Consumer;
+
+class Test {
+  void t(LocalDate firstMonthDayOfFrom, Object S, LocalDate lastMonthDayOfTo) {
+    Consumer<QContractStatus> statusesFilter = q -> {
+       q.dateTo.geOrNull(firstMonthDayOfFrom)
+        .or()
+            .dateTo.isNull()
+            .dateFrom.le(S.dateTo)
+        .endOr();
+    };
+
+    Consumer<QContractStatus> statusesFilter2 = qqq -> {
+      qqq
+        .dateTo.geOrNull(firstMonthDayOfFrom)
+        .or()
+            .dateTo.isNull()
+            .dateFrom.le(S.dateTo)
+        .endOr();
+    };
+
+    qqqqq
+      .and()
+          .date.le(lastMonthDayOfTo)
+          .date.ge(firstMonthDayOfFrom)
+      .endAnd();
+
+     q.and()
+          .date.le(lastMonthDayOfTo)
+          .date.ge(firstMonthDayOfFrom)
+      .endAnd();
+
+    qq.and()
+          .date.le(lastMonthDayOfTo)
+          .date.ge(firstMonthDayOfFrom)
+      .endAnd();
+
+    QTariffPayment qq = new QTariffPayment()
+      .or();
+  }
+}

@@ -2659,6 +2659,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             }
         } while (node != null);
         List<ExpressionTree> items = new ArrayList<>(stack);
+        boolean chainContainsLogicalBlocks = items.stream().anyMatch(JavaInputAstVisitor::isBlockOpen);
 
         boolean needDot = false;
 
@@ -2674,7 +2675,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             } else {
                 builder.open(OpenOp.builder()
                         .debugName("visitDot")
-                        .plusIndent(plusFour)
+                        .plusIndent(chainContainsLogicalBlocks ? plusTwo : plusFour)
                         .breakBehaviour(BreakBehaviours.preferBreakingLastInnerLevel(true))
                         .breakabilityIfLastLevel(
                                 LastLevelBreakability.ACCEPT_INLINE_CHAIN_IF_SIMPLE_OTHERWISE_CHECK_INNER)
@@ -2809,8 +2810,15 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     private void visitRegularDot(List<ExpressionTree> items, boolean needDot) {
         boolean needDot0 = needDot;
         boolean chainContainsLogicalBlocks = items.stream().anyMatch(JavaInputAstVisitor::isBlockOpen);
+        int rootIdentifierLength = items.get(0) instanceof IdentifierTree
+                ? ((IdentifierTree) items.get(0)).getName().length()
+                : -1;
+        boolean indentSingleCharLogicalRootChain = rootIdentifierLength == 1
+                && chainContainsLogicalBlocks;
+        Indent.Const minusOne = Indent.Const.make(-1, 1);
+        boolean shouldCloseSingleCharRootAlignment = false;
         if (!needDot0) {
-            Indent chainIndent = chainContainsLogicalBlocks ? ZERO : plusFour;
+            Indent chainIndent = chainContainsLogicalBlocks ? plusTwo : plusFour;
             builder.open(OpenOp.builder()
                     .debugName("visitRegularDot")
                     .plusIndent(chainIndent)
@@ -2852,6 +2860,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 boolean isFirstDereferenceOnNonIdentifier =
                         idx == 1 && prev != null && prev.getKind() != Tree.Kind.IDENTIFIER;
                 boolean startsAfterPrimaryExpression = needDot0 && idx == 0;
+                boolean breakBeforeFirstDereferenceForLongIdentifier =
+                        chainContainsLogicalBlocks && rootIdentifierLength > 2 && idx == 1;
                 boolean curIsField = e.getKind() == Tree.Kind.MEMBER_SELECT;
                 boolean curIsMethod = e.getKind() == Tree.Kind.METHOD_INVOCATION;
 
@@ -2871,8 +2881,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                                         || isFirstDereferenceOnNonIdentifier
                                         || startsAfterPrimaryExpression
                                         || (prevIsMethodLike && length > 0));
-                if (shouldBreakBeforeLogicalOpen || shouldBreak) {
-                    if (shouldBreakBeforeLogicalOpen || logicalBlockOpen) {
+                if (breakBeforeFirstDereferenceForLongIdentifier || shouldBreakBeforeLogicalOpen || shouldBreak) {
+                    if (breakBeforeFirstDereferenceForLongIdentifier || shouldBreakBeforeLogicalOpen || logicalBlockOpen) {
                         builder.breakOp(Break.makeForced());
                     } else {
                         builder.breakOp(Break.builder()
@@ -2891,6 +2901,12 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
 
             // Печать самого элемента
             if (!fillFirstArgument(e, items, ZERO)) {
+                if (!needDot && idx == 0 && indentSingleCharLogicalRootChain) {
+                    builder.open(minusOne);
+                    builder.breakOp(Break.makeForced());
+                    length = 0;
+                    shouldCloseSingleCharRootAlignment = true;
+                }
                 BreakTag tyargTag = new BreakTag();
                 dotExpressionUpToArgs(e, Optional.of(tyargTag));
                 Indent tyargIndent = Indent.If.make(tyargTag, plusFour, ZERO);
@@ -2902,6 +2918,10 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             }
 
             length += getLength(e, getCurrentPath());
+            if (idx == 0 && shouldCloseSingleCharRootAlignment) {
+                builder.close();
+                shouldCloseSingleCharRootAlignment = false;
+            }
 
             // После печати e: если это открытие блока — открываем с +4 для следующих строк
             if (isBlockOpen(e)) {
