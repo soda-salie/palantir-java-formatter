@@ -1,6 +1,6 @@
 apply plugin: 'java-library'
-apply plugin: 'com.palantir.external-publish-jar'
 apply plugin: 'com.palantir.revapi'
+apply plugin: 'com.palantir.external-publish-jar'
 
 dependencies {
     api 'com.google.guava:guava'
@@ -12,9 +12,12 @@ dependencies {
     testImplementation 'com.fasterxml.jackson.core:jackson-databind'
 }
 
-tasks.withType(JavaCompile).named('compileJava') {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+// Baseline sets every JavaCompile task's compatibility to the javaVersion target in afterEvaluate
+afterEvaluate {
+    tasks.withType(JavaCompile).named('compileJava') {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
 }
 
 javaVersion {

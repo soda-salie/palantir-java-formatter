@@ -34,6 +34,7 @@ import com.palantir.javaformat.bootstrap.BootstrappingFormatterService;
 import com.palantir.javaformat.bootstrap.NativeImageFormatterService;
 import com.palantir.javaformat.java.FormatterService;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
@@ -60,6 +61,7 @@ final class FormatterProvider {
     private final LoadingCache<FormatterCacheKey, Optional<FormatterService>> implementationCache =
             Caffeine.newBuilder().maximumSize(1).build(FormatterProvider::createFormatter);
 
+    @SuppressWarnings("for-rollout:deprecation")
     static IdeaPluginDescriptor getPluginDescriptor() {
         return Preconditions.checkNotNull(
                 PluginManager.getPlugin(PluginId.getId(PLUGIN_ID)), "Couldn't find our own plugin: %s", PLUGIN_ID);
@@ -123,6 +125,7 @@ final class FormatterProvider {
     private static List<Path> getBundledImplementationUrls() {
         // Load from the jars bundled with the plugin.
         IdeaPluginDescriptor ourPlugin = getPluginDescriptor();
+        @SuppressWarnings("for-rollout:deprecation")
         Path implDir = ourPlugin.getPath().toPath().resolve("impl");
         log.debug("Using palantir-java-format implementation bundled with plugin: {}", implDir);
         return listDirAsUrlsUnchecked(implDir);
@@ -171,6 +174,7 @@ final class FormatterProvider {
     private static OptionalInt parseSdkJavaVersion(Sdk sdk) {
         // Parses the actual version out of "SDK#getVersionString" which returns 'java version "15"'
         // or 'openjdk version "15.0.2"'.
+        @SuppressWarnings("for-rollout:deprecation")
         String version = Preconditions.checkNotNull(
                 JdkUtil.getJdkMainAttribute(sdk, Name.IMPLEMENTATION_VERSION), "JDK version is null");
         return parseSdkJavaVersion(version);
@@ -211,7 +215,7 @@ final class FormatterProvider {
         try (Stream<Path> list = Files.list(dir)) {
             return list.collect(Collectors.toList());
         } catch (IOException e) {
-            throw new RuntimeException("Couldn't list dir: " + dir, e);
+            throw new UncheckedIOException("Couldn't list dir: " + dir, e);
         }
     }
 

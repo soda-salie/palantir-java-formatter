@@ -30,14 +30,7 @@ import static com.palantir.javaformat.java.Trees.operatorName;
 import static com.palantir.javaformat.java.Trees.precedence;
 import static com.palantir.javaformat.java.Trees.skipParen;
 import static com.sun.source.tree.Tree.Kind.ANNOTATION;
-import static com.sun.source.tree.Tree.Kind.ARRAY_ACCESS;
-import static com.sun.source.tree.Tree.Kind.ASSIGNMENT;
-import static com.sun.source.tree.Tree.Kind.BLOCK;
 import static com.sun.source.tree.Tree.Kind.EXTENDS_WILDCARD;
-import static com.sun.source.tree.Tree.Kind.IF;
-import static com.sun.source.tree.Tree.Kind.METHOD_INVOCATION;
-import static com.sun.source.tree.Tree.Kind.NEW_ARRAY;
-import static com.sun.source.tree.Tree.Kind.NEW_CLASS;
 import static com.sun.source.tree.Tree.Kind.STRING_LITERAL;
 import static com.sun.source.tree.Tree.Kind.UNION_TYPE;
 import static com.sun.source.tree.Tree.Kind.VARIABLE;
@@ -161,6 +154,12 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
      * chain.
      */
     private static final int METHOD_CHAIN_COLUMN_LIMIT = 80;
+
+    /**
+     * Maximum column at which the annotated parameter of a record should start. This exists in particular to improve
+     * readability when one or multiple annotations are added to the parameters of a record.
+     */
+    private static final int ANNOTATION_RECORD_PARAMETER_COLUMN_LIMIT = 60;
 
     /** Direction for Annotations (usually VERTICAL). */
     protected enum Direction {
@@ -366,7 +365,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         }
         dropEmptyDeclarations();
         for (Tree type : node.getTypeDecls()) {
-            if (type.getKind() == Tree.Kind.IMPORT) {
+            if (type instanceof ImportTree) {
                 // javac treats extra semicolons in the import list as type declarations
                 // TODO(cushon): remove this if https://bugs.openjdk.java.net/browse/JDK-8027682 is fixed
                 continue;
@@ -383,6 +382,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         handleModule(first, node);
         // set a partial format marker at EOF to make sure we can format the entire file
         markForPartialFormat();
+        // Ensure the file ends with a newline
+        builder.forcedBreak();
         return null;
     }
 
@@ -497,7 +498,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 if (!first) {
                     builder.forcedBreak();
                 }
-                builder.open(row.iterator().next().getKind() == NEW_ARRAY || cols == 1 ? ZERO : plusFour);
+                builder.open(row.iterator().next() instanceof NewArrayTree || cols == 1 ? ZERO : plusFour);
                 boolean firstInRow = true;
                 for (ExpressionTree item : row) {
                     if (!firstInRow) {
@@ -749,7 +750,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         token("do");
         visitStatement(
                 node.getStatement(), CollapseEmptyOrNot.YES, AllowLeadingBlankLine.YES, AllowTrailingBlankLine.YES);
-        if (node.getStatement().getKind() == BLOCK) {
+        if (node.getStatement() instanceof BlockTree) {
             builder.space();
         } else {
             builder.breakOp(" ");
@@ -1002,12 +1003,11 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         token("(");
         builder.open(plusFour);
         builder.open(
-                node.getInitializer().size() > 1
-                                && node.getInitializer().get(0).getKind() == Tree.Kind.EXPRESSION_STATEMENT
+                node.getInitializer().size() > 1 && node.getInitializer().get(0) instanceof ExpressionStatementTree
                         ? plusFour
                         : ZERO);
         if (!node.getInitializer().isEmpty()) {
-            if (node.getInitializer().get(0).getKind() == VARIABLE) {
+            if (node.getInitializer().get(0) instanceof VariableTree) {
                 PeekingIterator<StatementTree> it =
                         Iterators.peekingIterator(node.getInitializer().iterator());
                 visitVariables(variableFragments(it, it.next()), DeclarationKind.NONE, Direction.HORIZONTAL);
@@ -1067,7 +1067,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         while (true) {
             expressions.add(node.getCondition());
             statements.add(node.getThenStatement());
-            if (node.getElseStatement() != null && node.getElseStatement().getKind() == IF) {
+            if (node.getElseStatement() != null && node.getElseStatement() instanceof IfTree) {
                 node = (IfTree) node.getElseStatement();
             } else {
                 break;
@@ -1101,7 +1101,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                     CollapseEmptyOrNot.valueOf(onlyClause),
                     AllowLeadingBlankLine.YES,
                     AllowTrailingBlankLine.valueOf(trailingClauses));
-            followingBlock = statements.get(i).getKind() == BLOCK;
+            followingBlock = statements.get(i) instanceof BlockTree;
             first = false;
         }
         if (node.getElseStatement() != null) {
@@ -1265,7 +1265,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             builder.breakOp(" ");
         }
 
-        if (node.getBody().getKind() == Tree.Kind.BLOCK) {
+        if (node.getBody() instanceof BlockTree) {
             visitBlock(
                     (BlockTree) node.getBody(),
                     CollapseEmptyOrNot.YES,
@@ -1335,7 +1335,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     public void visitAnnotationArgument(AssignmentTree node) {
-        boolean isArrayInitializer = node.getExpression().getKind() == NEW_ARRAY;
+        boolean isArrayInitializer = node.getExpression() instanceof NewArrayTree;
         sync(node);
         builder.open(
                 isArrayInitializer ? ZERO : plusFour,
@@ -1490,7 +1490,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             if (node.getDefaultValue() != null) {
                 builder.space();
                 token("default");
-                if (node.getDefaultValue().getKind() == Tree.Kind.NEW_ARRAY) {
+                if (node.getDefaultValue() instanceof NewArrayTree) {
                     builder.open(minusFour);
                     {
                         builder.space();
@@ -1806,10 +1806,10 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             return false;
         }
         ExpressionTree value = getOnlyElement(node.getArguments());
-        if (value.getKind() == ASSIGNMENT) {
+        if (value instanceof AssignmentTree) {
             return false;
         }
-        boolean isArrayInitializer = value.getKind() == NEW_ARRAY;
+        boolean isArrayInitializer = value instanceof NewArrayTree;
         builder.open(
                 isArrayInitializer ? ZERO : plusFour,
                 BreakBehaviours.preferBreakingLastInnerLevel(true),
@@ -1826,6 +1826,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         return true;
     }
 
+    @SuppressWarnings("for-rollout:deprecation")
     @Override
     public Void visitCase(CaseTree node, Void unused) {
         sync(node);
@@ -1841,7 +1842,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             token(":");
         }
         boolean isBlock =
-                node.getStatements().size() == 1 && node.getStatements().get(0).getKind() == BLOCK;
+                node.getStatements().size() == 1 && node.getStatements().get(0) instanceof BlockTree;
         builder.open(isBlock ? ZERO : plusTwo);
         if (isBlock) {
             builder.space();
@@ -1859,6 +1860,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     protected void visitSwitch(ExpressionTree expression, List<? extends CaseTree> cases) {
+        builder.open(ZERO);
         token("switch");
         builder.space();
         token("(");
@@ -1879,7 +1881,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         builder.close();
         builder.forcedBreak();
         builder.blankLineWanted(BlankLineWanted.NO);
-        token("}", plusFour);
+        token("}", plusTwo);
+        builder.close();
     }
 
     @Override
@@ -2215,13 +2218,23 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             ModifiersTree modifiersTree,
             Direction annotationsDirection,
             Optional<BreakTag> declarationAnnotationBreak) {
-        return visitModifiers(modifiersTree.getAnnotations(), annotationsDirection, declarationAnnotationBreak);
+        boolean isRecordParameter = modifiersTree instanceof JCTree.JCModifiers && isInRecord(modifiersTree);
+        return visitModifiers(
+                modifiersTree.getAnnotations(), annotationsDirection, declarationAnnotationBreak, isRecordParameter);
     }
 
     private List<Op> visitModifiers(
             List<? extends AnnotationTree> annotationTrees,
             Direction annotationsDirection,
             Optional<BreakTag> declarationAnnotationBreak) {
+        return visitModifiers(annotationTrees, annotationsDirection, declarationAnnotationBreak, false);
+    }
+
+    private List<Op> visitModifiers(
+            List<? extends AnnotationTree> annotationTrees,
+            Direction annotationsDirection,
+            Optional<BreakTag> declarationAnnotationBreak,
+            boolean isRecordParameter) {
         if (annotationTrees.isEmpty() && !nextIsModifier()) {
             return EMPTY_LIST;
         }
@@ -2244,9 +2257,19 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             lastWasAnnotation = true;
         }
         builder.close();
-        ImmutableList<Op> trailingBreak = annotationsDirection.isVertical()
-                ? forceBreakList(declarationAnnotationBreak)
-                : breakList(declarationAnnotationBreak);
+
+        // pjf specific: record params should take into consideration the columnLimit
+        ImmutableList<Op> trailingBreak = isRecordParameter
+                ? ImmutableList.of(Break.builder()
+                        .fillMode(FillMode.UNIFIED)
+                        .flat(" ")
+                        .plusIndent(ZERO)
+                        .hasColumnLimit(true)
+                        .optTag(declarationAnnotationBreak)
+                        .build())
+                : annotationsDirection.isVertical()
+                        ? forceBreakList(declarationAnnotationBreak)
+                        : breakList(declarationAnnotationBreak);
         if (annotations.isEmpty() && !nextIsModifier()) {
             return trailingBreak;
         }
@@ -2314,7 +2337,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         token("(");
         builder.open(plusFour);
         VariableTree ex = node.getParameter();
-        if (ex.getType().getKind() == UNION_TYPE) {
+        if (ex.getType() instanceof UnionTypeTree) {
             builder.open(ZERO);
             visitUnionType(ex);
             builder.close();
@@ -2390,6 +2413,11 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         if (!receiver.isPresent() && parameters.isEmpty()) {
             return;
         }
+        boolean isRecordParams = false;
+        if (!parameters.isEmpty() && parameters.get(0) instanceof JCTree.JCVariableDecl) {
+            isRecordParams = isInRecord(((JCTree.JCVariableDecl) parameters.get(0)).mods);
+        }
+
         builder.open(ZERO);
         boolean first = true;
         if (receiver.isPresent()) {
@@ -2413,13 +2441,26 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             if (!first) {
                 builder.breakOp(" ");
             }
+            BreakTag declarationAnnotationBreak = new BreakTag();
+
+            // pfj specific: add a conditional blank line if the annotated parameter was broken (only for records)
+            if (isRecordParams && !first) {
+                builder.blankLineWanted(BlankLineWanted.conditional(declarationAnnotationBreak));
+            }
+
             visitToDeclare(
                     DeclarationKind.PARAMETER,
                     Direction.HORIZONTAL,
                     parameter,
                     /* initializer= */ Optional.empty(),
                     "=",
-                    i < parameters.size() - 1 ? Optional.of(",") : /* a= */ Optional.empty());
+                    i < parameters.size() - 1 ? Optional.of(",") : /* a= */ Optional.empty(),
+                    Optional.of(declarationAnnotationBreak));
+
+            // pfj specific: add a conditional blank line if the annotated parameter was broken (only for records)
+            if (isRecordParams && i < parameters.size() - 1) {
+                builder.blankLineWanted(BlankLineWanted.conditional(declarationAnnotationBreak));
+            }
             first = false;
         }
         builder.close();
@@ -2589,6 +2630,17 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             Optional<ExpressionTree> initializer,
             String equals,
             Optional<String> trailing) {
+        visitToDeclare(kind, annotationsDirection, node, initializer, equals, trailing, Optional.empty());
+    }
+
+    private void visitToDeclare(
+            DeclarationKind kind,
+            Direction annotationsDirection,
+            VariableTree node,
+            Optional<ExpressionTree> initializer,
+            String equals,
+            Optional<String> trailing,
+            Optional<BreakTag> annotationBreakForRecords) {
         sync(node);
         declareOne(
                 kind,
@@ -2601,7 +2653,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 initializer,
                 trailing,
                 /* receiverExpression= */ Optional.empty(),
-                /* typeWithDims= */ Optional.empty());
+                /* typeWithDims= */ Optional.empty(),
+                annotationBreakForRecords);
     }
 
     /** Does not omit the leading '<', which should be associated with the type name. */
@@ -2637,7 +2690,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         LOOP:
         do {
             stack.addFirst(node);
-            if (node.getKind() == ARRAY_ACCESS) {
+            if (node instanceof ArrayAccessTree) {
                 node = getArrayBase(node);
             }
             switch (node.getKind()) {
@@ -2668,22 +2721,37 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         if (node != null) {
             // Exception: if it's an anonymous class declaration, we don't need to
             // break and indent after the trailing '}'.
-            if (node.getKind() == NEW_CLASS && ((NewClassTree) node).getClassBody() != null) {
+            if (node instanceof NewClassTree && ((NewClassTree) node).getClassBody() != null) {
                 builder.open(ZERO);
                 scan(getArrayBase(node), null);
                 token(".");
             } else {
+                boolean isTextBlock = false;
+                // Special case for text blocks: if the node is a string literal that ends with """,
+                // don't add a break after it
+                if (node instanceof LiteralTree && node.getKind() == Tree.Kind.STRING_LITERAL) {
+                    String sourceForNode = getSourceForNode(node, getCurrentPath());
+                    isTextBlock = sourceForNode.trim().endsWith(StringWrapper.TEXT_BLOCK_DELIMITER);
+                }
+
                 builder.open(OpenOp.builder()
                         .debugName("visitDot")
                         .plusIndent(chainContainsLogicalBlocks ? plusTwo : plusFour)
-                        .breakBehaviour(BreakBehaviours.preferBreakingLastInnerLevel(true))
+                        .breakBehaviour(
+                                isTextBlock
+                                        ? BreakBehaviours.breakOnlyIfInnerLevelsThenFitOnOneLine(false)
+                                        : BreakBehaviours.preferBreakingLastInnerLevel(true))
                         .breakabilityIfLastLevel(
-                                LastLevelBreakability.ACCEPT_INLINE_CHAIN_IF_SIMPLE_OTHERWISE_CHECK_INNER)
+                                isTextBlock
+                                        ? LastLevelBreakability.ACCEPT_INLINE_CHAIN
+                                        : LastLevelBreakability.ACCEPT_INLINE_CHAIN_IF_SIMPLE_OTHERWISE_CHECK_INNER)
                         .columnLimitBeforeLastBreak(METHOD_CHAIN_COLUMN_LIMIT)
                         .isSimple(false)
                         .build());
                 scan(getArrayBase(node), null);
-                builder.breakOp();
+                if (!isTextBlock) {
+                    builder.breakOp();
+                }
                 needDot = true;
             }
             formatArrayIndices(getArrayIndices(node));
@@ -2704,7 +2772,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         {
             for (int i = 0; i < items.size(); i++) {
                 ExpressionTree expression = items.get(i);
-                if (expression.getKind() == METHOD_INVOCATION) {
+                if (expression instanceof MethodInvocationTree) {
                     if (i > 0 || node != null) {
                         // we only want dereference invocations
                         invocationCount++;
@@ -2971,7 +3039,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             return false;
         }
         // don't special-case calls nested inside expressions
-        if (e.getKind() != METHOD_INVOCATION) {
+        if (!(e instanceof MethodInvocationTree)) {
             return false;
         }
         MethodInvocationTree methodInvocation = (MethodInvocationTree) e;
@@ -3008,7 +3076,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         @SuppressWarnings("for-rollout:NullAway")
         boolean trailingDereferences = !prefixes.isEmpty() && getLast(prefixes) < items.size() - 1;
 
-        boolean hasMethodInvocations = items.stream().anyMatch(expr -> expr.getKind() == METHOD_INVOCATION);
+        boolean hasMethodInvocations = items.stream().anyMatch(expr -> expr instanceof MethodInvocationTree);
 
         builder.open(OpenOp.builder()
                 .debugName("visitDotWithPrefix")
@@ -3098,7 +3166,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
      * Whereas an expression like a name {@code com.palantir.foo.bar.Baz} would not.
      */
     private boolean shouldHaveColumnLimit(ExpressionTree expr) {
-        return getArrayBase(expr).getKind() == METHOD_INVOCATION;
+        return getArrayBase(expr) instanceof MethodInvocationTree;
     }
 
     /** Returns the simple names of expressions in a "." chain. */
@@ -3106,7 +3174,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         ImmutableList.Builder<String> simpleNames = ImmutableList.builder();
         OUTER:
         for (ExpressionTree expression : stack) {
-            boolean isArray = expression.getKind() == ARRAY_ACCESS;
+            boolean isArray = expression instanceof ArrayAccessTree;
             expression = getArrayBase(expression);
             switch (expression.getKind()) {
                 case MEMBER_SELECT:
@@ -3486,7 +3554,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     static int rowLength(List<? extends ExpressionTree> row) {
         int size = 0;
         for (ExpressionTree tree : row) {
-            if (tree.getKind() != NEW_ARRAY) {
+            if (!(tree instanceof NewArrayTree)) {
                 size++;
                 continue;
             }
@@ -3568,9 +3636,39 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             Optional<String> trailing,
             Optional<ExpressionTree> receiverExpression,
             Optional<TypeWithDims> typeWithDims) {
+        return declareOne(
+                kind,
+                annotationsDirection,
+                modifiers,
+                type,
+                name,
+                op,
+                equals,
+                initializer,
+                trailing,
+                receiverExpression,
+                typeWithDims,
+                Optional.empty());
+    }
+
+    /** Declare one variable or variable-like thing. */
+    @SuppressWarnings("TooManyArguments")
+    int declareOne(
+            DeclarationKind kind,
+            Direction annotationsDirection,
+            Optional<ModifiersTree> modifiers,
+            Tree type,
+            Name name,
+            String op,
+            String equals,
+            Optional<ExpressionTree> initializer,
+            Optional<String> trailing,
+            Optional<ExpressionTree> receiverExpression,
+            Optional<TypeWithDims> typeWithDims,
+            Optional<BreakTag> verticalAnnotationBreakForRecords) {
 
         BreakTag typeBreak = new BreakTag();
-        BreakTag verticalAnnotationBreak = new BreakTag();
+        BreakTag verticalAnnotationBreak = verticalAnnotationBreakForRecords.orElseGet(BreakTag::new);
 
         // If the node is a field declaration, try to output any declaration
         // annotations in-line. If the entire declaration doesn't fit on a single
@@ -3585,12 +3683,22 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 new ArrayDeque<>(typeWithDims.isPresent() ? typeWithDims.get().dims : Collections.emptyList());
         int baseDims = 0;
 
-        builder.open(
-                kind == DeclarationKind.PARAMETER
-                                && (modifiers.isPresent()
-                                        && !modifiers.get().getAnnotations().isEmpty())
-                        ? plusFour
-                        : ZERO);
+        if (kind == DeclarationKind.PARAMETER
+                && modifiers.isPresent()
+                && !modifiers.get().getAnnotations().isEmpty()) {
+            if (!isInRecord(modifiers.get())) {
+                builder.open(plusFour);
+            } else {
+                // pjf specific: we are enforcing the column limit for annotated parameters of records
+                builder.open(OpenOp.builder()
+                        .debugName("visitParam")
+                        .plusIndent(ZERO)
+                        .columnLimitBeforeLastBreak(ANNOTATION_RECORD_PARAMETER_COLUMN_LIMIT)
+                        .build());
+            }
+        } else {
+            builder.open(ZERO);
+        }
         {
             if (modifiers.isPresent()) {
                 visitAndBreakModifiers(modifiers.get(), annotationsDirection, Optional.of(verticalAnnotationBreak));
@@ -3629,7 +3737,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                     if (receiverExpression.isPresent()) {
                         scan(receiverExpression.get(), null);
                     } else {
-                        visit(name);
+                        variableName(name);
                     }
                     builder.op(op);
                 }
@@ -3641,22 +3749,16 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             if (initializer.isPresent()) {
                 builder.space();
                 token(equals);
-                if (initializer.get().getKind() == Tree.Kind.NEW_ARRAY
-                        && ((NewArrayTree) initializer.get()).getType() == null) {
+                if (initializer.get() instanceof NewArrayTree && ((NewArrayTree) initializer.get()).getType() == null) {
                     builder.open(minusFour);
                     builder.space();
                     initializer.get().accept(this, null);
                     builder.close();
                 } else {
-                    if (builder.peekToken().get().equals("switch")) {
-                        // TODO(fawind): Don't break switch expression assignment
-                        builder.open(Indent.If.make(typeBreak, plusFour, ZERO));
-                    } else {
-                        builder.open(
-                                Indent.If.make(typeBreak, plusFour, ZERO),
-                                BreakBehaviours.breakOnlyIfInnerLevelsThenFitOnOneLine(true),
-                                LastLevelBreakability.ABORT);
-                    }
+                    builder.open(
+                            Indent.If.make(typeBreak, plusFour, ZERO),
+                            BreakBehaviours.breakOnlyIfInnerLevelsThenFitOnOneLine(true),
+                            LastLevelBreakability.ABORT);
                     {
                         builder.breakToFill(" ");
                         scan(initializer.get(), null);
@@ -3678,6 +3780,10 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         }
 
         return baseDims;
+    }
+
+    protected void variableName(Name name) {
+        visit(name);
     }
 
     private void maybeAddDims(Deque<List<? extends AnnotationTree>> annotations) {
@@ -3768,7 +3874,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             builder.breakOp(" ");
             builder.open(ZERO);
             maybeAddDims(dims);
-            visit(fragment.getName());
+            variableName(fragment.getName());
             maybeAddDims(dims);
             ExpressionTree initializer = fragment.getInitializer();
             if (initializer != null) {
@@ -3791,6 +3897,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
 
     /** Add a list of declarations. */
+    @SuppressWarnings("for-rollout:NullAway")
     protected void addBodyDeclarations(
             List<? extends Tree> bodyDeclarations, BracesOrNot braces, FirstDeclarationsOrNot first0) {
         if (bodyDeclarations.isEmpty()) {
@@ -3818,7 +3925,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 builder.forcedBreak();
                 @SuppressWarnings("for-rollout:NullAway")
                 boolean thisOneGetsBlankLineBefore =
-                        bodyDeclaration.getKind() != VARIABLE || hasJavaDoc(bodyDeclaration);
+                        !(bodyDeclaration instanceof VariableTree) || hasJavaDoc(bodyDeclaration);
                 if (first) {
                     builder.blankLineWanted(PRESERVE);
                 } else if (!first && (thisOneGetsBlankLineBefore || lastOneGotBlankLineBefore)) {
@@ -3826,7 +3933,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
                 }
                 markForPartialFormat();
 
-                if (bodyDeclaration.getKind() == VARIABLE) {
+                if (bodyDeclaration instanceof VariableTree) {
                     visitVariables(
                             variableFragments(it, bodyDeclaration),
                             DeclarationKind.FIELD,
@@ -3886,10 +3993,10 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     @SuppressWarnings("for-rollout:NullAway")
     private List<VariableTree> variableFragments(PeekingIterator<? extends Tree> it, Tree first) {
         List<VariableTree> fragments = new ArrayList<>();
-        if (first.getKind() == VARIABLE) {
+        if (first instanceof VariableTree) {
             int start = getStartPosition(first);
             fragments.add((VariableTree) first);
-            while (it.hasNext() && it.peek().getKind() == VARIABLE && getStartPosition(it.peek()) == start) {
+            while (it.hasNext() && it.peek() instanceof VariableTree && getStartPosition(it.peek()) == start) {
                 fragments.add((VariableTree) it.next());
             }
         }
@@ -3956,6 +4063,13 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             }
         }
         return Direction.HORIZONTAL;
+    }
+
+    /**
+     * Checks if the modifiers are parameters of a record definition.
+     */
+    private boolean isInRecord(ModifiersTree modifiers) {
+        return (((JCTree.JCModifiers) modifiers).flags & RECORD) == RECORD;
     }
 
     /**

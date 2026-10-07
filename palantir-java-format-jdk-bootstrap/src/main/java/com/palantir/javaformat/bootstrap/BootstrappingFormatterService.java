@@ -27,6 +27,7 @@ import com.palantir.javaformat.java.FormatterException;
 import com.palantir.javaformat.java.FormatterService;
 import com.palantir.javaformat.java.Replacement;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
@@ -55,7 +56,7 @@ public final class BootstrappingFormatterService implements FormatterService {
         try {
             return getFormatReplacementsInternal(input, ranges);
         } catch (IOException e) {
-            throw new RuntimeException("Error running formatter command", e);
+            throw new UncheckedIOException("Error running formatter command", e);
         }
     }
 
@@ -64,7 +65,7 @@ public final class BootstrappingFormatterService implements FormatterService {
         try {
             return runFormatterCommand(input);
         } catch (IOException e) {
-            throw new RuntimeException("Error running formatter command", e);
+            throw new UncheckedIOException("Error running formatter command", e);
         }
     }
 
@@ -73,7 +74,7 @@ public final class BootstrappingFormatterService implements FormatterService {
         try {
             return runFormatterCommand(input);
         } catch (IOException e) {
-            throw new RuntimeException("Error running formatter command", e);
+            throw new UncheckedIOException("Error running formatter command", e);
         }
     }
 
